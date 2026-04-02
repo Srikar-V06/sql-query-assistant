@@ -1,0 +1,19 @@
+[project]
+name = "sql-query-assistant"
+version = "1.0.0"
+description = "SQL Query Assistant OpenEnv environment"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "openai",
+    "sqlite-utils",
+    "openenv-core>=0.2.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[project.urls]
+Homepage = "https://huggingface.co/spaces/KiteManohar/sql-query-assistant"

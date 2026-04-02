@@ -4,22 +4,16 @@ import json
 import time
 from openai import OpenAI
 
-# ── Read env vars (never hardcode these) ─────────────────────────
-API_BASE_URL = os.environ.get("API_BASE_URL")
-MODEL_NAME   = os.environ.get("MODEL_NAME")
-HF_TOKEN     = os.environ.get("HF_TOKEN")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://api.groq.com/openai/v1")
+MODEL_NAME   = os.getenv("MODEL_NAME",   "llama-3.3-70b-versatile")
+HF_TOKEN     = os.getenv("HF_TOKEN")
 
-if not all([API_BASE_URL, MODEL_NAME, HF_TOKEN]):
-    print("ERROR: API_BASE_URL, MODEL_NAME, and HF_TOKEN must all be set.", file=sys.stderr)
+if not HF_TOKEN:
+    print("ERROR: HF_TOKEN not set.", file=sys.stderr)
     sys.exit(1)
 
-# ── OpenAI client pointed at Groq ────────────────────────────────
-client = OpenAI(
-    api_key  = HF_TOKEN,
-    base_url = API_BASE_URL,
-)
+client = OpenAI(api_key=HF_TOKEN, base_url=API_BASE_URL)
 
-# ── Import your environment ───────────────────────────────────────
 from environment import SQLQueryEnvironment
 from models      import Action
 from tasks       import TASK_ORDER, ALL_TASKS
@@ -59,14 +53,27 @@ Error:  {obs.last_error  or 'None'}
 Write the correct SQL query now:"""
 
 
-def run_episode(env, task_id: str, episode_num: int):
-    obs  = env.reset(task_id=task_id)
-    done = False
-    step = 0
+def log_start(task: str, model: str) -> None:
+    print(f"[START] task={task} env=sql-query-assistant model={model}", flush=True)
 
-    # ── [START] log ───────────────────────────────────────────────
-    print(json.dumps({"log": "START", "task_id": task_id, "episode": episode_num}))
-    sys.stdout.flush()
+def log_step(step: int, action: str, reward: float, done: bool, error) -> None:
+    error_val = error if error else "null"
+    done_val  = str(done).lower()
+    action_short = action.replace("\n", " ")[:120]
+    print(f"[STEP] step={step} action={action_short} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+def log_end(success: bool, steps: int, rewards: list) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
+
+
+def run_episode(env, task_id: str):
+    obs     = env.reset(task_id=task_id)
+    done    = False
+    step    = 0
+    rewards = []
+
+    log_start(task=task_id, model=MODEL_NAME)
 
     while not done and step < obs.max_steps:
         step += 1
@@ -85,36 +92,25 @@ def run_episode(env, task_id: str, episode_num: int):
         except Exception as e:
             sql = f"-- model error: {e}"
 
-        result = env.step(Action(query=sql))
-        obs    = result.observation
-        done   = result.done
+        result  = env.step(Action(query=sql))
+        obs     = result.observation
+        done    = result.done
+        reward  = result.reward.score
+        error   = result.observation.last_error
 
-        # ── [STEP] log ────────────────────────────────────────────
-        print(json.dumps({
-            "log":     "STEP",
-            "step":    step,
-            "query":   sql[:300],
-            "score":   round(result.reward.score, 4),
-            "correct": result.reward.is_correct,
-        }))
-        sys.stdout.flush()
+        rewards.append(reward)
+        log_step(step=step, action=sql, reward=reward, done=done, error=error)
 
-        time.sleep(1)   # avoid Groq rate limits
+        time.sleep(1)
 
-    # ── [END] log ─────────────────────────────────────────────────
-    print(json.dumps({
-        "log":         "END",
-        "task_id":     task_id,
-        "final_score": round(result.reward.score, 4),
-        "is_correct":  result.reward.is_correct,
-    }))
-    sys.stdout.flush()
+    success = result.reward.is_correct
+    log_end(success=success, steps=step, rewards=rewards)
 
 
 def main():
     env = SQLQueryEnvironment()
-    for i, task_id in enumerate(TASK_ORDER, start=1):
-        run_episode(env, task_id, episode_num=i)
+    for task_id in TASK_ORDER:
+        run_episode(env, task_id)
 
 if __name__ == "__main__":
     main()
