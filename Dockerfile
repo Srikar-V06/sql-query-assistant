@@ -24,6 +24,8 @@ COPY --chown=user database.py    .
 COPY --chown=user graders.py     .
 COPY --chown=user models.py      .
 COPY --chown=user tasks.py       .
+COPY --chown=user inference.py   .
+COPY --chown=user openenv.yaml   .
 
 # ── Switch to non-root user ────────────────────────────────────────────────────
 USER user
