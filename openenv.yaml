@@ -1,0 +1,182 @@
+id: sql-query-assistant
+name: SQL Query Assistant
+version: "1.0.0"
+description: >
+  An RL environment where agents write SQL queries against a seeded, in-memory
+  SQLite e-commerce database (500 customers, 50 products, 1 200 orders, 3 000+
+  order-items, 800 reviews). The agent must produce the exact correct result set
+  for four analytical tasks of different difficulties — filtering, multi-table
+  aggregation, and churn identification — within a fixed step budget.
+
+domain: data-analysis
+tags:
+  - sql
+  - data-analysis
+  - e-commerce
+  - natural-language-to-sql
+  - rl-environment
+
+# ── Interface ─────────────────────────────────────────────────────────────────
+interface:
+  reset:
+    method: POST
+    path: /reset
+    request_schema:
+      type: object
+      properties:
+        task_id:
+          type: string
+          nullable: true
+          description: >
+            One of 'customer_filter', 'top_products_revenue', 'churned_customers'.
+            Omit to cycle through tasks in order.
+  step:
+    method: POST
+    path: /step
+    request_schema:
+      type: object
+      required: [query]
+      properties:
+        query:
+          type: string
+          description: A valid SQLite SELECT (or WITH…SELECT) statement.
+  state:
+    method: GET
+    path: /state
+  tasks:
+    method: GET
+    path: /tasks
+  grader:
+    method: GET
+    path: /grader
+  baseline:
+    method: POST
+    path: /baseline
+
+# ── Observation space ─────────────────────────────────────────────────────────
+observation_space:
+  type: object
+  fields:
+    task_id:
+      type: string
+    task_description:
+      type: string
+    schema_info:
+      type: string
+      description: Full CREATE TABLE DDL for all six tables.
+    sample_rows:
+      type: object
+      description: 3 sample rows per table to ground the agent in real data.
+    last_query:
+      type: string
+      nullable: true
+    last_result:
+      type: array
+      nullable: true
+      description: Up to 50 rows returned by the previous query.
+    last_error:
+      type: string
+      nullable: true
+    steps_taken:
+      type: integer
+    max_steps:
+      type: integer
+    done:
+      type: boolean
+
+# ── Action space ──────────────────────────────────────────────────────────────
+action_space:
+  type: object
+  required: [query]
+  fields:
+    query:
+      type: string
+      description: >
+        A SQLite SELECT (or WITH…SELECT) statement. Only read operations are
+        permitted — write operations are safety-blocked and return score=0.
+
+# ── Reward ────────────────────────────────────────────────────────────────────
+reward:
+  range: [0.0, 1.0]
+  type: shaped
+  description: >
+    Reward is constructed from four weighted dimensions:
+      syntax       (0.10) — query executed without error
+      columns      (0.20) — all required columns present in output
+      partial_rows (0.30) — ≥50 % of ground-truth rows matched (set-based)
+      exact_match  (0.40) — result exactly equals ground truth
+    Two shaping rules are applied on top:
+      efficiency bonus  — +0.05 × (remaining_steps / max_steps) on correct answer
+      step penalty      — −0.02 per incorrect step beyond step 3
+    Final score is clamped to [0.0, 1.0].
+
+# ── Tasks ─────────────────────────────────────────────────────────────────────
+tasks:
+  - id: customer_filter
+    difficulty: easy
+    max_steps: 5
+    description: >
+      Filter the customers table to find premium members (is_premium=1)
+      who signed up on or after 2023-01-01. Return customer_id, name,
+      city, signup_date ordered by signup_date ASC, customer_id ASC.
+    required_columns: [customer_id, name, city, signup_date]
+    order_matters: true
+    tags: [filter, sort, single-table]
+
+  - id: top_products_revenue
+    difficulty: medium
+    max_steps: 8
+    description: >
+      Find the top 5 products by total revenue from DELIVERED orders in
+      Q3 2023 (2023-07-01 – 2023-09-30). Join order_items → orders →
+      products → categories. Return product_id, product_name,
+      category_name, total_revenue (2 dp) ordered by total_revenue DESC.
+    required_columns: [product_id, product_name, category_name, total_revenue]
+    order_matters: true
+    tags: [join, group-by, aggregation, date-filter, top-n]
+
+  - id: churned_customers
+    difficulty: hard
+    max_steps: 10
+    description: >
+      Identify customers with ≥1 DELIVERED order in Q1 2023 but zero
+      orders of any status after 2023-03-31. Return customer_id, name,
+      city, total_q1_orders, last_order_value ordered by
+      last_order_value DESC, customer_id ASC.
+    required_columns: [customer_id, name, city, total_q1_orders, last_order_value]
+    order_matters: true
+    tags: [cte, subquery, churn, multi-join]
+
+  - id: category_review_summary
+    difficulty: medium-hard
+    max_steps: 7
+    description: >
+      For each product category with at least 50 reviews, compute total_reviews,
+      avg_rating (2 dp), and pct_five_star (1 dp). Return category_name,
+      total_reviews, avg_rating, pct_five_star ordered by avg_rating DESC,
+      category_name ASC.
+    required_columns: [category_name, total_reviews, avg_rating, pct_five_star]
+    order_matters: true
+    tags: [join, group-by, having, aggregation, percentage]
+
+# ── Reproducibility ───────────────────────────────────────────────────────────
+reproducibility:
+  seed: 42
+  deterministic: true
+  note: >
+    All data is generated from a fixed random seed (42) using Python's
+    built-in random module. Calling reset() always rebuilds the same
+    in-memory SQLite database, making ground-truth rows and baseline
+    scores fully reproducible across runs.
+
+# ── Baseline ─────────────────────────────────────────────────────────────────
+baseline:
+  model: gpt-4o
+  script: baseline.py
+  env_vars:
+    - OPENAI_API_KEY
+  scores:
+    customer_filter:      ~0.95
+    top_products_revenue: ~0.90
+    churned_customers:    ~0.75
+    category_review_summary: ~0.85
