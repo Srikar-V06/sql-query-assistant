@@ -2,7 +2,7 @@
 title: SQL Query Assistant
 emoji: 🗄️
 colorFrom: blue
-colorTo: teal
+colorTo: green
 sdk: docker
 pinned: false
 tags:
