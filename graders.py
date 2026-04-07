@@ -232,6 +232,7 @@ def _base_grade(
     # ── Final score ──────────────────────────────────────────────────────────
     total = sum(breakdown.values())
     total = round(min(total, 1.0), 4)
+    total = max(0.001, min(0.999, total))
 
     return Reward(
         score=total,

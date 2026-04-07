@@ -259,6 +259,7 @@ class SQLQueryEnvironment:
                 notes.append(f"(-{penalty:.3f} step penalty: step {self._steps_taken} > {PENALTY_AFTER_STEP})")
 
         score = round(score, 4)
+        score = max(0.001, min(0.999, score))
 
         shaped_feedback = base.feedback
         if notes:
